@@ -52,6 +52,7 @@ fn main() {
         } else {
             writeln!(log_file, "Solutions:").unwrap();
             for s in &solutions {
+                // 按引用遍历，避免不必要的克隆
                 writeln!(log_file, "{}", s).unwrap();
             }
         }
