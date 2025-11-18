@@ -31,12 +31,15 @@ const EPSILON: f64 = 1e-6;
 /// 3. 调用 `solve_24` 获取所有表达式；
 /// 4. 按时间戳记录抽到的牌和对应的所有解，若无解则写入提示。
 fn main() {
+    // Ensure the `log` directory exists so opening the file won't fail.
+    std::fs::create_dir_all("log").expect("Failed to create log directory");
+
     let mut log_file = OpenOptions::new()
         .create(true)
         .append(true)
         .open("log/24_game_log.txt")
         .expect("Failed to open log file");
-    loop {
+        // Run a single hand (generate, solve, log) and then exit.
         let mut cards = (1..=13).collect::<Vec<i32>>();
         let mut rng = thread_rng();
         cards.shuffle(&mut rng);
@@ -52,7 +55,6 @@ fn main() {
         } else {
             writeln!(log_file, "Solutions:").unwrap();
             for s in &solutions {
-                // 按引用遍历，避免不必要的克隆
                 writeln!(log_file, "{}", s).unwrap();
             }
         }
@@ -62,7 +64,6 @@ fn main() {
             hand,
             solutions.len()
         );
-    }
 
     // println!("Log file has been updated.");
 }
@@ -73,37 +74,59 @@ fn main() {
 /// 再对每一个排列调用 `find_solutions_for_permutation` 来遍历
 /// 运算符与括号结构。使用 `HashSet` 避免重复表达式。
 fn solve_24(cards: &[i32]) -> Vec<String> {
-    let mut solutions = HashSet::new();
-    let mut nums: Vec<f64> = cards.iter().map(|&x| x as f64).collect();
-    let mut used = [false; 4];
-    let mut p = Vec::new();
-    generate_permutations(&mut nums, &mut used, &mut p, &mut |perm| {
-        find_solutions_for_permutation(perm, &mut solutions);
-    });
-    solutions.into_iter().collect()
+    let nums: Vec<f64> = cards.iter().map(|&x| x as f64).collect();
+    // For each permutation compute its solutions set, then union them all.
+    permutations(&nums)
+        .into_iter()
+        .fold(HashSet::new(), |mut acc, perm| {
+            acc.extend(find_solutions_for_permutation(&perm));
+            acc
+        })
+        .into_iter()
+        .collect()
 }
 
-/// 一个简单的回溯函数，用于生成 `nums` 的所有排列，
-/// 并在取得完整排列后调用回调函数。
-fn generate_permutations(
-    nums: &mut Vec<f64>,
-    used: &mut [bool],
-    p: &mut Vec<f64>,
-    callback: &mut dyn FnMut(&[f64]),
-) {
-    if p.len() == nums.len() {
-        callback(p);
-        return;
+/// 返回 `nums` 的所有排列（每个排列为 `Vec<f64>`）。
+///
+/// 详细说明：
+/// - 该函数以递归方式实现。对于非空输入，函数会枚举每个位置 `i` 作为当前头元素 `v`，
+///   构造剩余元素 `rest`（去掉索引 `i` 的元素），递归计算 `rest` 的所有排列，
+///   然后把 `v` 置于每个子排列的头部，得到完整排列列表。
+/// - 基准情形：当 `nums` 为空时，返回 `vec![vec![]]`，即包含一个空排列，这样递归拼接时能正确回溯。
+/// - 风格与性能：该实现是函数式的——不依赖外部可变状态或回调，返回新分配的数据结构，
+///   因而易于理解与测试。其时间复杂度为 O(n! * n)，空间复杂度也为 O(n!)（因为要保存所有排列），
+///   对本程序的 n=4 情形而言开销可忽略。
+///
+/// 示例：
+/// ```rust
+/// let perms = permutations(&[1.0, 2.0, 3.0]);
+/// // `perms` 将包含 6 个排列：
+/// // [1.0, 2.0, 3.0]
+/// // [1.0, 3.0, 2.0]
+/// // [2.0, 1.0, 3.0]
+/// // [2.0, 3.0, 1.0]
+/// // [3.0, 1.0, 2.0]
+/// // [3.0, 2.0, 1.0]
+/// ```
+fn permutations(nums: &[f64]) -> Vec<Vec<f64>> {
+    if nums.is_empty() {
+        return vec![vec![]];
     }
-    for i in 0..nums.len() {
-        if !used[i] {
-            used[i] = true;
-            p.push(nums[i]);
-            generate_permutations(nums, used, p, callback);
-            p.pop();
-            used[i] = false;
-        }
-    }
+
+    nums.iter()
+        .enumerate()
+        .flat_map(|(i, &v)| {
+            let rest: Vec<f64> = nums
+                .iter()
+                .enumerate()
+                .filter_map(|(j, &x)| if i == j { None } else { Some(x) })
+                .collect();
+
+            permutations(&rest)
+                .into_iter()
+                .map(move |tail| std::iter::once(v).chain(tail).collect())
+        })
+        .collect()
 }
 
 /// 对固定顺序的 4 个数字，尝试所有运算符组合与 5 种括号结构。
@@ -117,83 +140,120 @@ fn generate_permutations(
 ///
 /// 每个结构都严格按照计算顺序逐步调用 `apply_op`，当结果与 `TARGET`
 /// 在 `EPSILON` 范围内相等时，即认为找到了一个正确解。
-fn find_solutions_for_permutation(perm: &[f64], solutions: &mut HashSet<String>) {
+fn find_solutions_for_permutation(perm: &[f64]) -> HashSet<String> {
+    let mut solutions = HashSet::new();
     let ops = ['+', '-', '*', '/'];
     for &op1 in &ops {
         for &op2 in &ops {
             for &op3 in &ops {
-                // Structure: (a op1 b) op2 (c op3 d)
-                if let Some(val1) = apply_op(perm[0], perm[1], op1) {
-                    if let Some(val2) = apply_op(perm[2], perm[3], op3) {
-                        if let Some(res) = apply_op(val1, val2, op2) {
-                            if (res - TARGET).abs() < EPSILON {
-                                solutions.insert(format!(
-                                    "({} {} {}) {} ({} {} {})",
-                                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
-                                ));
-                            }
-                        }
-                    }
+                // For each structure, call small pure helpers and insert any match.
+                if let Some(s) = try_struct1(perm, op1, op2, op3) {
+                    solutions.insert(s);
                 }
-
-                // Structure: ((a op1 b) op2 c) op3 d
-                if let Some(val1) = apply_op(perm[0], perm[1], op1) {
-                    if let Some(val2) = apply_op(val1, perm[2], op2) {
-                        if let Some(res) = apply_op(val2, perm[3], op3) {
-                            if (res - TARGET).abs() < EPSILON {
-                                solutions.insert(format!(
-                                    "(({} {} {}) {} {}) {} {}",
-                                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
-                                ));
-                            }
-                        }
-                    }
+                if let Some(s) = try_struct2(perm, op1, op2, op3) {
+                    solutions.insert(s);
                 }
-
-                // Structure: a op1 (b op2 (c op3 d))
-                if let Some(val1) = apply_op(perm[2], perm[3], op3) {
-                    if let Some(val2) = apply_op(perm[1], val1, op2) {
-                        if let Some(res) = apply_op(perm[0], val2, op1) {
-                            if (res - TARGET).abs() < EPSILON {
-                                solutions.insert(format!(
-                                    "{} {} ({} {} ({} {} {}))",
-                                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
-                                ));
-                            }
-                        }
-                    }
+                if let Some(s) = try_struct3(perm, op1, op2, op3) {
+                    solutions.insert(s);
                 }
-
-                // Structure: (a op1 (b op2 c)) op3 d
-                if let Some(val1) = apply_op(perm[1], perm[2], op2) {
-                    if let Some(val2) = apply_op(perm[0], val1, op1) {
-                        if let Some(res) = apply_op(val2, perm[3], op3) {
-                            if (res - TARGET).abs() < EPSILON {
-                                solutions.insert(format!(
-                                    "({} {} ({} {} {})) {} {}",
-                                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
-                                ));
-                            }
-                        }
-                    }
+                if let Some(s) = try_struct4(perm, op1, op2, op3) {
+                    solutions.insert(s);
                 }
-
-                // Structure: a op1 ((b op2 c) op3 d)
-                if let Some(val1) = apply_op(perm[1], perm[2], op2) {
-                    if let Some(val2) = apply_op(val1, perm[3], op3) {
-                        if let Some(res) = apply_op(perm[0], val2, op1) {
-                            if (res - TARGET).abs() < EPSILON {
-                                solutions.insert(format!(
-                                    "{} {} (({} {} {}) {} {})",
-                                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
-                                ));
-                            }
-                        }
-                    }
+                if let Some(s) = try_struct5(perm, op1, op2, op3) {
+                    solutions.insert(s);
                 }
             }
         }
     }
+
+    solutions
+}
+
+// Each of the following functions represents one of the five parenthesization
+// structures. They are pure (no mutation) and return an Option<String>
+// describing the expression when it evaluates to TARGET.
+fn try_struct1(perm: &[f64], op1: char, op2: char, op3: char) -> Option<String> {
+    // (a op1 b) op2 (c op3 d)
+    apply_op(perm[0], perm[1], op1)
+        .and_then(|val1| apply_op(perm[2], perm[3], op3).and_then(|val2| apply_op(val1, val2, op2)))
+        .and_then(|res| {
+            if (res - TARGET).abs() < EPSILON {
+                Some(format!(
+                    "({} {} {}) {} ({} {} {})",
+                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
+                ))
+            } else {
+                None
+            }
+        })
+}
+
+fn try_struct2(perm: &[f64], op1: char, op2: char, op3: char) -> Option<String> {
+    // ((a op1 b) op2 c) op3 d
+    apply_op(perm[0], perm[1], op1)
+        .and_then(|val1| apply_op(val1, perm[2], op2))
+        .and_then(|val2| apply_op(val2, perm[3], op3))
+        .and_then(|res| {
+            if (res - TARGET).abs() < EPSILON {
+                Some(format!(
+                    "(({} {} {}) {} {}) {} {}",
+                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
+                ))
+            } else {
+                None
+            }
+        })
+}
+
+fn try_struct3(perm: &[f64], op1: char, op2: char, op3: char) -> Option<String> {
+    // a op1 (b op2 (c op3 d))
+    apply_op(perm[2], perm[3], op3)
+        .and_then(|val1| apply_op(perm[1], val1, op2))
+        .and_then(|val2| apply_op(perm[0], val2, op1))
+        .and_then(|res| {
+            if (res - TARGET).abs() < EPSILON {
+                Some(format!(
+                    "{} {} ({} {} ({} {} {}))",
+                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
+                ))
+            } else {
+                None
+            }
+        })
+}
+
+fn try_struct4(perm: &[f64], op1: char, op2: char, op3: char) -> Option<String> {
+    // (a op1 (b op2 c)) op3 d
+    apply_op(perm[1], perm[2], op2)
+        .and_then(|val1| apply_op(perm[0], val1, op1))
+        .and_then(|val2| apply_op(val2, perm[3], op3))
+        .and_then(|res| {
+            if (res - TARGET).abs() < EPSILON {
+                Some(format!(
+                    "({} {} ({} {} {})) {} {}",
+                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
+                ))
+            } else {
+                None
+            }
+        })
+}
+
+fn try_struct5(perm: &[f64], op1: char, op2: char, op3: char) -> Option<String> {
+    // a op1 ((b op2 c) op3 d)
+    apply_op(perm[1], perm[2], op2)
+        .and_then(|val1| apply_op(val1, perm[3], op3))
+        .and_then(|val2| apply_op(perm[0], val2, op1))
+        .and_then(|res| {
+            if (res - TARGET).abs() < EPSILON {
+                Some(format!(
+                    "{} {} (({} {} {}) {} {})",
+                    perm[0], op1, perm[1], op2, perm[2], op3, perm[3]
+                ))
+            } else {
+                None
+            }
+        })
 }
 
 /// 尝试对两个操作数应用运算符，必要时拦截非法操作并返回 `None`。
@@ -208,5 +268,57 @@ fn apply_op(a: f64, b: f64, op: char) -> Option<f64> {
         '*' => Some(a * b),
         '/' if b.abs() > EPSILON => Some(a / b),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_apply_op_basic() {
+        assert_eq!(apply_op(2.0, 3.0, '+'), Some(5.0));
+        assert_eq!(apply_op(5.0, 3.0, '-'), Some(2.0));
+        assert_eq!(apply_op(4.0, 3.0, '*'), Some(12.0));
+        assert_eq!(apply_op(8.0, 2.0, '/'), Some(4.0));
+        // division by (near) zero should return None
+        assert_eq!(apply_op(1.0, 1e-9, '/'), None);
+    }
+
+    #[test]
+    fn test_try_struct1_success_and_failure() {
+        let perm = [6.0, 2.0, 3.0, 4.0];
+        // (6 * 2) + (3 * 4) == 24
+        assert!(try_struct1(&perm, '*', '+', '*').is_some());
+        // wrong ops shouldn't match
+        assert!(try_struct1(&perm, '+', '+', '+').is_none());
+    }
+
+    #[test]
+    fn test_try_struct2_success() {
+        let perm = [2.0, 3.0, 4.0, 1.0];
+        // ((2 * 3) * 4) * 1 == 24
+        assert!(try_struct2(&perm, '*', '*', '*').is_some());
+    }
+
+    #[test]
+    fn test_try_struct3_success() {
+        let perm = [3.0, 2.0, 4.0, 1.0];
+        // 3 * (2 * (4 * 1)) == 24
+        assert!(try_struct3(&perm, '*', '*', '*').is_some());
+    }
+
+    #[test]
+    fn test_try_struct4_success() {
+        let perm = [2.0, 3.0, 4.0, 1.0];
+        // (2 * (3 * 4)) * 1 == 24
+        assert!(try_struct4(&perm, '*', '*', '*').is_some());
+    }
+
+    #[test]
+    fn test_try_struct5_success() {
+        let perm = [3.0, 2.0, 2.0, 2.0];
+        // 3 * ((2 * 2) * 2) == 24
+        assert!(try_struct5(&perm, '*', '*', '*').is_some());
     }
 }
