@@ -39,31 +39,31 @@ fn main() {
         .append(true)
         .open("log/24_game_log.txt")
         .expect("Failed to open log file");
-        // Run a single hand (generate, solve, log) and then exit.
-        let mut cards = (1..=13).collect::<Vec<i32>>();
-        let mut rng = thread_rng();
-        cards.shuffle(&mut rng);
-        let hand: Vec<i32> = cards.into_iter().take(4).collect();
+    // Run a single hand (generate, solve, log) and then exit.
+    let mut cards = (1..=13).collect::<Vec<i32>>();
+    let mut rng = thread_rng();
+    cards.shuffle(&mut rng);
+    let hand: Vec<i32> = cards.into_iter().take(4).collect();
 
-        let solutions = solve_24(&hand);
+    let solutions = solve_24(&hand);
 
-        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-        writeln!(log_file, "[{}] Cards: {:?}", timestamp, hand).unwrap();
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+    writeln!(log_file, "[{}] Cards: {:?}", timestamp, hand).unwrap();
 
-        if solutions.is_empty() {
-            writeln!(log_file, "No solution found.").unwrap();
-        } else {
-            writeln!(log_file, "Solutions:").unwrap();
-            for s in &solutions {
-                writeln!(log_file, "{}", s).unwrap();
-            }
+    if solutions.is_empty() {
+        writeln!(log_file, "No solution found.").unwrap();
+    } else {
+        writeln!(log_file, "Solutions:").unwrap();
+        for s in &solutions {
+            writeln!(log_file, "{}", s).unwrap();
         }
-        writeln!(log_file, "--------------------").unwrap();
-        println!(
-            "Processed hand: {:3?}.\t Solution count {:12}.",
-            hand,
-            solutions.len()
-        );
+    }
+    writeln!(log_file, "--------------------").unwrap();
+    println!(
+        "Processed hand: {:3?}.\t Solution count {:12}.",
+        hand,
+        solutions.len()
+    );
 
     // println!("Log file has been updated.");
 }
